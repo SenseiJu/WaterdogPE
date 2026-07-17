@@ -37,6 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -148,7 +150,7 @@ public class SwitchDownstreamHandlerTest {
         assertNull(this.harness.player.getPendingConnection());
         verify(this.lobby.connection()).setPacketHandler(null);
         verify(this.lobby.connection()).disconnect();
-        verify(this.harness.upstream).setTransferQueueActive(true);
+        verify(this.harness.upstream).setTransferQueueActive(eq(true), anyString());
 
         assertEquals(1, this.harness.events(ServerTransferEvent.class).size());
         assertEquals(1, this.harness.scheduledTasks.size(), "transfer timeout should be armed");

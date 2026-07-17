@@ -151,7 +151,7 @@ public class TransferCallback {
         if (this.player.getConnection().getPacketHandler() instanceof ConnectedUpstreamHandler handler) {
             handler.setTargetConnection(this.connection);
         }
-        this.player.getConnection().setTransferQueueActive(false);
+        this.player.getConnection().setTransferQueueActive(false, this.player.getName());
         this.transferPhase = PHASE_2;
         this.player.getLogger().debug("[{}] Transfer phase 1 complete, transfer queue flushed, awaiting phase 2 dimension change",
                 this.logId());

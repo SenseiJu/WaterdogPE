@@ -277,7 +277,7 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
         if (fastTransfer) {
             Vector3f fakePosition = packet.getPlayerPosition().add(2000, 0, 2000);
             injectPosition(this.player.getConnection(), fakePosition, packet.getRotation(), rewriteData.getEntityId());
-            this.player.getConnection().setTransferQueueActive(true);
+            this.player.getConnection().setTransferQueueActive(true, this.player.getName());
             injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
                     rewriteData.getEntityId(), player.getProtocol(), true, this.player.isSubChunkRequestMode());
             log.debug("[{}|{}] Transfer to {}: fast path with transfer screen, queue active, awaiting client DIMENSION_CHANGE_SUCCESS (dim {} -> {})",

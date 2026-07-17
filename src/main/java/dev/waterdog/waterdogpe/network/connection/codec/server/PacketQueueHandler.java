@@ -29,6 +29,7 @@ public class PacketQueueHandler extends ChannelDuplexHandler {
     private static final int QUEUE_LOG_INTERVAL = 2000;
 
     private final BedrockServerSession session;
+    private final String playerName;
 
     private int packetCounter = 0;
     private long queueStartedAt = 0;
@@ -37,14 +38,23 @@ public class PacketQueueHandler extends ChannelDuplexHandler {
     private volatile boolean finished;
     private volatile boolean dropQueued;
 
-    public PacketQueueHandler(BedrockServerSession session) {
+    public PacketQueueHandler(BedrockServerSession session, String playerName) {
         this.session = session;
+        this.playerName = playerName;
+    }
+
+    /**
+     * Correlation id for logs: the upstream socket address plus the player name. The address matches the
+     * one used across the transfer-flow logs, so queue lines and transfer lines can be traced together.
+     */
+    private String logId() {
+        return this.session.getSocketAddress() + "|" + this.playerName;
     }
 
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) {
         this.queueStartedAt = System.nanoTime();
-        log.debug("[{}] transfer queue started", this.session.getSocketAddress());
+        log.debug("[{}] transfer queue started", this.logId());
     }
 
     /**
@@ -155,13 +165,13 @@ public class PacketQueueHandler extends ChannelDuplexHandler {
             if (log.isDebugEnabled() && previousCounter / QUEUE_LOG_INTERVAL != this.packetCounter / QUEUE_LOG_INTERVAL) {
                 long elapsedMs = this.queueStartedAt == 0 ? 0 : TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - this.queueStartedAt);
                 log.debug("[{}] transfer queue growing: batches={} packets={} elapsed={}ms",
-                        this.session.getSocketAddress(), this.queue.size(), this.packetCounter, elapsedMs);
+                        this.logId(), this.queue.size(), this.packetCounter, elapsedMs);
             }
         } else {
             long buildTimeMs = this.queueStartedAt == 0 ? 0 : TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - this.queueStartedAt);
             log.warn("[{}] has reached maximum transfer queue capacity: batches={} packets={} buildTime={}ms limits=[batches={} packets={}]",
-                    this.session.getSocketAddress(), this.queue.size(), this.packetCounter, buildTimeMs, MAX_BATCHES, MAX_PACKETS);
-            log.warn("[{}] transfer queue packet id breakdown: {}", this.session.getSocketAddress(), this.dumpPacketIds(ctx, batch));
+                    this.logId(), this.queue.size(), this.packetCounter, buildTimeMs, MAX_BATCHES, MAX_PACKETS);
+            log.warn("[{}] transfer queue packet id breakdown: {}", this.logId(), this.dumpPacketIds(ctx, batch));
             this.finish(ctx, false);
             this.session.disconnect("Transfer queue got too large");
 

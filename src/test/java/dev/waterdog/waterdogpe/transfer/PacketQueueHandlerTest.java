@@ -40,7 +40,7 @@ public class PacketQueueHandlerTest {
     @BeforeEach
     void setUp() {
         this.session = mock(BedrockServerSession.class);
-        this.handler = new PacketQueueHandler(this.session);
+        this.handler = new PacketQueueHandler(this.session, "TestPlayer");
         this.channel = new EmbeddedChannel();
         this.channel.pipeline().addLast(PacketQueueHandler.NAME, this.handler);
     }

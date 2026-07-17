@@ -91,7 +91,7 @@ public class BedrockServerSession extends BedrockSession implements ProxiedConne
         this.sendPacketImmediately(packet);
     }
 
-    public void setTransferQueueActive(boolean enable) {
+    public void setTransferQueueActive(boolean enable, String playerName) {
         if (!this.getPeer().isConnected()) {
             throw new IllegalStateException("Connection was already closed");
         }
@@ -99,7 +99,7 @@ public class BedrockServerSession extends BedrockSession implements ProxiedConne
         ChannelPipeline pipeline = this.getPeer().getChannel().pipeline();
         if (enable) {
             if (pipeline.get(PacketQueueHandler.NAME) == null) {
-                pipeline.addBefore(BedrockPeer.NAME, PacketQueueHandler.NAME, new PacketQueueHandler(this));
+                pipeline.addBefore(BedrockPeer.NAME, PacketQueueHandler.NAME, new PacketQueueHandler(this, playerName));
             } else {
                 throw new IllegalStateException("Transfer queue for " + this.getSocketAddress() + " is already active");
             }
