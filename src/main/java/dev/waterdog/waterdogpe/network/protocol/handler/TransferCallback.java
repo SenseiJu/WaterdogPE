@@ -70,6 +70,14 @@ public class TransferCallback {
     }
 
     /**
+     * Correlation id for logs: the upstream socket address plus the player name. The address matches the
+     * one PacketQueueHandler logs, so transfer-flow lines and transfer-queue lines can be traced together.
+     */
+    private String logId() {
+        return this.player.getAddress() + "|" + this.player.getName();
+    }
+
+    /**
      * Started by the winner of the transfer claim: kicks the player if the transfer never
      * finishes nor fails on its own.
      */
@@ -95,7 +103,7 @@ public class TransferCallback {
         this.finalized = true;
         this.player.getRewriteData().clearTransferCallback(this);
 
-        this.player.getLogger().warning("[" + this.player.getName() + "] Transfer to " + this.targetServer.getServerName()
+        this.player.getLogger().warning("[" + this.logId() + "] Transfer to " + this.targetServer.getServerName()
                 + " timed out in phase " + phase + " (spawned=" + this.hasPlayStatus + ")");
         this.player.getProxy().getEventManager().callEvent(new ServerTransferFailedEvent(
                 this.player, this.targetServer, ReconnectReason.TIMEOUT, "Transfer timed out", false));
@@ -103,6 +111,8 @@ public class TransferCallback {
     }
 
     public synchronized boolean onDimChangeSuccess() {
+        this.player.getLogger().debug("[{}] onDimChangeSuccess in phase {} (target={})",
+                this.logId(), this.transferPhase, this.targetServer.getServerName());
         switch (this.transferPhase) {
             case PHASE_1:
                 // First dimension change was completed successfully.
@@ -114,6 +124,8 @@ public class TransferCallback {
                 this.onTransferPhase2Completed();
                 break;
             default:
+                this.player.getLogger().debug("[{}] onDimChangeSuccess ignored: transfer not in a dimension-change phase (phase={})",
+                        this.logId(), this.transferPhase);
                 return false;
         }
         return true;
@@ -141,6 +153,8 @@ public class TransferCallback {
         }
         this.player.getConnection().setTransferQueueActive(false);
         this.transferPhase = PHASE_2;
+        this.player.getLogger().debug("[{}] Transfer phase 1 complete, transfer queue flushed, awaiting phase 2 dimension change",
+                this.logId());
     }
 
     private void onTransferPhase2Completed() {
@@ -168,6 +182,7 @@ public class TransferCallback {
 
         // RESET before the event so handlers may start a new transfer right away.
         this.transferPhase = RESET;
+        this.player.getLogger().debug("[{}] Transfer phase 2 complete (spawned={})", this.logId(), this.hasPlayStatus);
 
         TransferCompleteEvent event = new TransferCompleteEvent(this.sourceServer, this.connection, this.player);
         this.player.getProxy().getEventManager().callEvent(event);
@@ -181,10 +196,13 @@ public class TransferCallback {
      */
     public synchronized void tryTransferFinalize() {
         if (this.finalized || !this.hasPlayStatus || this.transferPhase != RESET) {
+            this.player.getLogger().debug("[{}] Transfer not finalized yet: finalized={} spawned={} phase={}",
+                    this.logId(), this.finalized, this.hasPlayStatus, this.transferPhase);
             return;
         }
         this.finalized = true;
         this.cancelTimeout();
+        this.player.getLogger().debug("[{}] Transfer to {} finalized", this.logId(), this.targetServer.getServerName());
         // The callback stays registered until now so a PLAYER_SPAWN arriving after phase 2 can still
         // finalize the transfer through AbstractDownstreamHandler.
         this.player.getRewriteData().clearTransferCallback(this);
@@ -199,6 +217,7 @@ public class TransferCallback {
 
     public void onPlayStatus() {
         this.hasPlayStatus = true;
+        this.player.getLogger().debug("[{}] Received PLAYER_SPAWN play status (phase={})", this.logId(), this.transferPhase);
         tryTransferFinalize();
     }
 
@@ -224,7 +243,7 @@ public class TransferCallback {
         }
 
         this.connection.disconnect();
-        this.player.getLogger().warning("Failed to transfer " + this.player.getName() + " to " + this.targetServer.getServerName() + ": " + reason);
+        this.player.getLogger().warning("[" + this.logId() + "] Failed to transfer to " + this.targetServer.getServerName() + ": " + reason);
     }
 
     public TransferPhase getPhase() {

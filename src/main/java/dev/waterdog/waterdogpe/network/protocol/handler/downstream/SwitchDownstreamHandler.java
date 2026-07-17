@@ -165,6 +165,8 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
             return Signals.CANCEL;
         }
         transferCallback.startTimeout();
+        log.debug("[{}|{}] Received StartGame from {}, transfer claimed (target dim {}), timeout started",
+                this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId());
 
         oldConnection.getServerInfo().removeConnection(oldConnection);
         // When disconnect is called from outside the event loop, the actual disconnection will run asynchronously.
@@ -278,15 +280,21 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
             this.player.getConnection().setTransferQueueActive(true);
             injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
                     rewriteData.getEntityId(), player.getProtocol(), true, this.player.isSubChunkRequestMode());
+            log.debug("[{}|{}] Transfer to {}: fast path with transfer screen, queue active, awaiting client DIMENSION_CHANGE_SUCCESS (dim {} -> {})",
+                    this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId(), newDimension);
         } else if (newDimension == packet.getDimensionId()) {
             // Transfer between different dimensions
             injectPosition(this.player.getConnection(), packet.getPlayerPosition(), packet.getRotation(), rewriteData.getEntityId());
             injectDimensionChange(this.player.getConnection(), newDimension, packet.getPlayerPosition(),
                     rewriteData.getEntityId(), player.getProtocol(), false, this.player.isSubChunkRequestMode());
+            log.debug("[{}|{}] Transfer to {}: same-dimension path, simulating dim-change immediately (dim {})",
+                    this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId());
             transferCallback.onDimChangeSuccess(); // Simulate two dim-change behaviour
         } else {
             injectPosition(this.player.getConnection(), packet.getPlayerPosition(), packet.getRotation(), rewriteData.getEntityId());
             rewriteData.setDimension(packet.getDimensionId());
+            log.debug("[{}|{}] Transfer to {}: cross-dimension path, simulating two dim-changes immediately (dim {} -> {})",
+                    this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId(), newDimension);
             transferCallback.onDimChangeSuccess();
             transferCallback.onDimChangeSuccess();
         }

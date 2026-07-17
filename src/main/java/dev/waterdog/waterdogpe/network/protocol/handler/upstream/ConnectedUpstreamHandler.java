@@ -65,6 +65,8 @@ public class ConnectedUpstreamHandler extends AbstractUpstreamHandler implements
         }
 
         TransferCallback transferCallback = this.player.getRewriteData().getTransferCallback();
+        this.player.getLogger().debug("[{}|{}] Received DIMENSION_CHANGE_SUCCESS from client (transferActive={})",
+                this.player.getAddress(), this.player.getName(), transferCallback != null);
         if (transferCallback != null && transferCallback.onDimChangeSuccess()) {
             return Signals.CANCEL;
         }
