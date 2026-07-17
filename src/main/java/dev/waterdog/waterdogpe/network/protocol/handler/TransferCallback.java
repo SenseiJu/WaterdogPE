@@ -28,6 +28,7 @@ import dev.waterdog.waterdogpe.network.protocol.rewrite.types.RewriteData;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import dev.waterdog.waterdogpe.scheduler.TaskHandler;
 import dev.waterdog.waterdogpe.utils.types.TranslationContainer;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -138,9 +139,17 @@ public class TransferCallback {
     }
 
     public synchronized void onSubChunkRequest(int dimension, Vector3i center, List<Vector3i> offsets) {
-        if (this.pendingAckColumns == null || dimension != this.pendingAckDimension) {
+        if (this.pendingAckColumns == null) {
+            this.player.getLogger().debug("[{}] sub-chunk request (no deferred ACK pending): dim={} center=({},{}) offsets={}",
+                    this.logId(), dimension, center.getX(), center.getZ(), offsets.size());
             return;
         }
+        if (dimension != this.pendingAckDimension) {
+            this.player.getLogger().debug("[{}] sub-chunk request for dim={} but deferred ACK armed for dim={} - not counted (center=({},{}) offsets={})",
+                    this.logId(), dimension, this.pendingAckDimension, center.getX(), center.getZ(), offsets.size());
+            return;
+        }
+        int before = this.pendingAckColumns.size();
         if (offsets.isEmpty()) {
             this.pendingAckColumns.remove(chunkKey(center.getX(), center.getZ()));
         } else {
@@ -148,11 +157,36 @@ public class TransferCallback {
                 this.pendingAckColumns.remove(chunkKey(center.getX() + offset.getX(), center.getZ() + offset.getZ()));
             }
         }
+        this.player.getLogger().debug("[{}] sub-chunk request: center=({},{}) offsets={} pending columns {} -> {} | left: {}",
+                this.logId(), center.getX(), center.getZ(), offsets.size(), before, this.pendingAckColumns.size(),
+                remainingColumnsPreview());
         if (this.pendingAckColumns.isEmpty()) {
             this.player.getLogger().debug("[{}] All fake columns requested, sending deferred dim change ACK (dim={})",
                     this.logId(), dimension);
             this.sendDeferredAck();
         }
+    }
+
+    /**
+     * Formats the still-unrequested fake columns (up to 24) as (chunkX,chunkZ) pairs so a stuck transfer
+     * shows exactly which columns the client never asked for.
+     */
+    private String remainingColumnsPreview() {
+        if (this.pendingAckColumns.isEmpty()) {
+            return "none";
+        }
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        LongIterator it = this.pendingAckColumns.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            if (shown++ >= 24) {
+                sb.append("...");
+                break;
+            }
+            sb.append('(').append((int) (key >> 32)).append(',').append((int) key).append(')');
+        }
+        return sb.toString();
     }
 
     private void sendDeferredAck() {

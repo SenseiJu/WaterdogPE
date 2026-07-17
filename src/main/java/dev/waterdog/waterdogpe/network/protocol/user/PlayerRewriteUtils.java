@@ -71,6 +71,12 @@ public class PlayerRewriteUtils {
     private static final ByteBuf fakeChunkDataNether;
     private static final ByteBuf fakeChunkDataEnd;
     private static final ByteBuf emptyChunkRaw;
+    // Biome-only payloads for sub-chunk request mode. In request mode the LevelChunk payload still carries
+    // the column's biomes (only the block sub-chunks are deferred), so it must not be empty or the client
+    // fails to initialise the column and never requests any sub-chunks - hanging the dimension change.
+    private static final ByteBuf fakeBiomeDataOverworld;
+    private static final ByteBuf fakeBiomeDataNether;
+    private static final ByteBuf fakeBiomeDataEnd;
 
     static {
         defaultChunkRadius.setRadius(8);
@@ -85,6 +91,12 @@ public class PlayerRewriteUtils {
         fakeChunkDataNether = createChunkData(1, 8);
         fakeChunkDataEnd = createChunkData(1, 16);
         emptyChunkRaw = createChunkDataRaw();
+
+        // Same biome section counts as the full chunks above, but with zero block sections since the
+        // client requests those separately in sub-chunk request mode.
+        fakeBiomeDataOverworld = createChunkData(0, 24);
+        fakeBiomeDataNether = createChunkData(0, 8);
+        fakeBiomeDataEnd = createChunkData(0, 16);
     }
 
     private static ByteBuf createChunkDataRaw() {
@@ -424,7 +436,13 @@ public class PlayerRewriteUtils {
                 case DIMENSION_END -> 15;
                 default -> 23;
             });
-            packet.setData(Unpooled.EMPTY_BUFFER);
+            // Must carry the column's biomes even in request mode; an empty payload leaves the client
+            // unable to initialise the column, so it never sends any sub-chunk requests.
+            packet.setData(switch (dimension) {
+                case DIMENSION_NETHER -> fakeBiomeDataNether.retainedSlice();
+                case DIMENSION_END -> fakeBiomeDataEnd.retainedSlice();
+                default -> fakeBiomeDataOverworld.retainedSlice();
+            });
         } else if (version.isAfterOrEqual(ProtocolVersion.MINECRAFT_PE_1_18_30)) {
             packet.setSubChunksLength(1);
             switch (dimension) {
