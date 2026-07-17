@@ -28,10 +28,7 @@ import dev.waterdog.waterdogpe.network.protocol.rewrite.types.RewriteData;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import dev.waterdog.waterdogpe.scheduler.TaskHandler;
 import dev.waterdog.waterdogpe.utils.types.TranslationContainer;
-import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongList;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.longs.LongSet;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
@@ -67,9 +64,6 @@ public class TransferCallback {
     private volatile boolean finalized = false;
     private volatile boolean hasPlayStatus = false;
     private volatile TaskHandler<?> timeoutTask;
-
-    private LongSet pendingAckColumns;
-    private int pendingAckDimension;
 
     public TransferCallback(ProxiedPlayer player, ClientConnection connection, ServerInfo sourceServer, int targetDimension) {
         this.player = player;
@@ -111,7 +105,6 @@ public class TransferCallback {
         TransferPhase phase = this.transferPhase;
         this.transferPhase = RESET;
         this.finalized = true;
-        this.pendingAckColumns = null;
         this.player.getRewriteData().clearTransferCallback(this);
 
         this.player.getLogger().warning("[" + this.logId() + "] Transfer to " + this.targetServer.getServerName()
@@ -122,87 +115,28 @@ public class TransferCallback {
     }
 
     /**
-     * In sub-chunk request mode the fake chunks are empty shells the client still has to request.
-     * Sending the server-side dim change ACK before those requests can race the client's chunk
-     * loading, so it is held back until every column was requested. An empty column list means
-     * nothing to wait for and the ACK is sent right away.
+     * Sends the server-side dimension change ACK immediately. Clients on the transfer screen frequently
+     * send no sub-chunk requests at all, and they wait for this ACK before proceeding - so gating it on
+     * sub-chunk requests deadlocks them. This matches the downstream bridge, Geyser and Spectrum, which
+     * all send the ACK right after the ChangeDimension without waiting on the client.
+     * The requestModeColumns argument is kept for tracing only.
      */
     public synchronized void armDimChangeAck(LongList requestModeColumns, int dimension) {
-        if (requestModeColumns.isEmpty() || this.player.getProtocol().isBefore(ProtocolVersion.MINECRAFT_PE_1_19_50)) {
-            injectDimensionChangeAck(this.player.getConnection(), this.player.getRewriteData().getEntityId(), this.player.getProtocol());
-            return;
-        }
-        this.pendingAckColumns = new LongOpenHashSet(requestModeColumns);
-        this.pendingAckDimension = dimension;
-        this.player.getLogger().debug("[{}] Deferred dim change ACK armed: columns={} dim={}",
-                this.logId(), requestModeColumns.size(), dimension);
+        this.player.getLogger().debug("[{}] Sending dim change ACK immediately (dim={}, requestModeColumns={})",
+                this.logId(), dimension, requestModeColumns.size());
+        injectDimensionChangeAck(this.player.getConnection(), this.player.getRewriteData().getEntityId(), this.player.getProtocol());
     }
 
     public synchronized void onSubChunkRequest(int dimension, Vector3i center, List<Vector3i> offsets) {
-        if (this.pendingAckColumns == null) {
-            this.player.getLogger().debug("[{}] sub-chunk request (no deferred ACK pending): dim={} center=({},{}) offsets={}",
-                    this.logId(), dimension, center.getX(), center.getZ(), offsets.size());
-            return;
-        }
-        if (dimension != this.pendingAckDimension) {
-            this.player.getLogger().debug("[{}] sub-chunk request for dim={} but deferred ACK armed for dim={} - not counted (center=({},{}) offsets={})",
-                    this.logId(), dimension, this.pendingAckDimension, center.getX(), center.getZ(), offsets.size());
-            return;
-        }
-        int before = this.pendingAckColumns.size();
-        if (offsets.isEmpty()) {
-            this.pendingAckColumns.remove(chunkKey(center.getX(), center.getZ()));
-        } else {
-            for (Vector3i offset : offsets) {
-                this.pendingAckColumns.remove(chunkKey(center.getX() + offset.getX(), center.getZ() + offset.getZ()));
-            }
-        }
-        this.player.getLogger().debug("[{}] sub-chunk request: center=({},{}) offsets={} pending columns {} -> {} | left: {}",
-                this.logId(), center.getX(), center.getZ(), offsets.size(), before, this.pendingAckColumns.size(),
-                remainingColumnsPreview());
-        if (this.pendingAckColumns.isEmpty()) {
-            this.player.getLogger().debug("[{}] All fake columns requested, sending deferred dim change ACK (dim={})",
-                    this.logId(), dimension);
-            this.sendDeferredAck();
-        }
-    }
-
-    /**
-     * Formats the still-unrequested fake columns (up to 24) as (chunkX,chunkZ) pairs so a stuck transfer
-     * shows exactly which columns the client never asked for.
-     */
-    private String remainingColumnsPreview() {
-        if (this.pendingAckColumns.isEmpty()) {
-            return "none";
-        }
-        StringBuilder sb = new StringBuilder();
-        int shown = 0;
-        LongIterator it = this.pendingAckColumns.iterator();
-        while (it.hasNext()) {
-            long key = it.nextLong();
-            if (shown++ >= 24) {
-                sb.append("...");
-                break;
-            }
-            sb.append('(').append((int) (key >> 32)).append(',').append((int) key).append(')');
-        }
-        return sb.toString();
-    }
-
-    private void sendDeferredAck() {
-        this.pendingAckColumns = null;
-        injectDimensionChangeAck(this.player.getConnection(), this.player.getRewriteData().getEntityId(), this.player.getProtocol());
+        // Purely diagnostic now that the ACK is sent immediately: shows whether the client requests
+        // sub-chunks during the transfer and for which dimension.
+        this.player.getLogger().debug("[{}] sub-chunk request: dim={} center=({},{}) offsets={} phase={}",
+                this.logId(), dimension, center.getX(), center.getZ(), offsets.size(), this.transferPhase);
     }
 
     public synchronized boolean onDimChangeSuccess() {
         this.player.getLogger().debug("[{}] onDimChangeSuccess in phase {} (target={})",
                 this.logId(), this.transferPhase, this.targetServer.getServerName());
-        if (this.pendingAckColumns != null) {
-            // Client finished the dim change without requesting every column, the ACK must not be withheld now.
-            this.player.getLogger().debug("[{}] Client dim change done with {} columns never requested, sending deferred ACK",
-                    this.logId(), this.pendingAckColumns.size());
-            this.sendDeferredAck();
-        }
         switch (this.transferPhase) {
             case PHASE_1:
                 // First dimension change was completed successfully.
@@ -321,7 +255,6 @@ public class TransferCallback {
         // callback is active, and queued packets from the abandoned target must never reach the client.
         this.transferPhase = RESET;
         this.finalized = true; // a late PLAYER_SPAWN must not finalize a failed transfer
-        this.pendingAckColumns = null;
         this.cancelTimeout();
         this.player.getRewriteData().clearTransferCallback(this);
         this.player.getConnection().discardTransferQueue();
