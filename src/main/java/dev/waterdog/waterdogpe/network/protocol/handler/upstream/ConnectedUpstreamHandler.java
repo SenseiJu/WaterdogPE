@@ -79,8 +79,12 @@ public class ConnectedUpstreamHandler extends AbstractUpstreamHandler implements
         // server is wired to the client and provides the real chunks, so its sub-chunk requests must pass through.
         TransferCallback callback = this.player.getRewriteData().getTransferCallback();
         if (callback == null || callback.getPhase() != TransferCallback.TransferPhase.PHASE_1) {
+            this.player.getLogger().debug("[{}|{}] SubChunkRequest passed through to server (phase={})",
+                    this.player.getAddress(), this.player.getName(), callback == null ? "none" : callback.getPhase());
             return PacketSignal.UNHANDLED;
         }
+        this.player.getLogger().debug("[{}|{}] SubChunkRequest during PHASE_1, answering with air sub-chunks (offsets={})",
+                this.player.getAddress(), this.player.getName(), packet.getPositionOffsets().size());
         injectAirSubChunkResponse(this.player.getConnection(), packet);
         return Signals.CANCEL;
     }

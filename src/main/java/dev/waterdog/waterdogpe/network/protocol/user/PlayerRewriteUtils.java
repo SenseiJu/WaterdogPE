@@ -18,6 +18,7 @@ package dev.waterdog.waterdogpe.network.protocol.user;
 import dev.waterdog.waterdogpe.network.connection.ProxiedConnection;
 import dev.waterdog.waterdogpe.network.connection.codec.batch.BatchFlags;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import lombok.extern.log4j.Log4j2;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
@@ -46,6 +47,7 @@ import java.util.UUID;
  * Collection of functions to remove various client-sided data sets when switching servers.
  * For example removing client-sided weather, effects, effect particles etc..
  */
+@Log4j2
 public class PlayerRewriteUtils {
 
     public static final RequestChunkRadiusPacket defaultChunkRadius = new RequestChunkRadiusPacket();
@@ -132,6 +134,7 @@ public class PlayerRewriteUtils {
         packet.setPosition(center);
         packet.setRadius(chunkRadius << 4); // radius is in blocks, not chunks
         session.sendPacketImmediately(packet);
+        log.debug("[{}] injectChunkPublisherUpdate: center={} radius={} chunks", session.getSocketAddress(), center, chunkRadius);
     }
 
     public static void injectGameMode(ProxiedConnection session, GameType gameMode) {
@@ -337,11 +340,15 @@ public class PlayerRewriteUtils {
         if (session == null || !session.isConnected()) {
             return;
         }
+        log.debug("[{}] injectDimensionChange: dim={} pos={} chunks={} requestSubChunks={} protocol={}",
+                session.getSocketAddress(), dimensionId, position, chunks, requestSubChunks, version.getProtocol());
+
         ChangeDimensionPacket packet = new ChangeDimensionPacket();
         packet.setPosition(position);
         packet.setRespawn(true);
         packet.setDimension(dimensionId);
         session.sendPacketImmediately(packet);
+        log.debug("[{}] injectDimensionChange: sent ChangeDimensionPacket (dim={})", session.getSocketAddress(), dimensionId);
 
         if (chunks) {
             injectChunkPublisherUpdate(session, position.toInt(), 3);
@@ -358,6 +365,8 @@ public class PlayerRewriteUtils {
             actionPacket.setResultPosition(Vector3i.ZERO);
             actionPacket.setFace(0);
             session.sendPacketImmediately(actionPacket);
+            log.debug("[{}] injectDimensionChange: sent server-side DIMENSION_CHANGE_SUCCESS ack (protocol {} >= 1.19.50)",
+                    session.getSocketAddress(), version.getProtocol());
         }
     }
 
@@ -375,6 +384,8 @@ public class PlayerRewriteUtils {
         BedrockBatchWrapper wrapper = BedrockBatchWrapper.create(session.getSubClientId(), packets.toArray(new BedrockPacket[0]));
         wrapper.setFlag(BatchFlags.SKIP_QUEUE);
         session.sendPacket(wrapper);
+        log.debug("[{}] injectEmptyChunks: sent {} LevelChunkPackets center=({},{}) dim={} requestSubChunks={}",
+                session.getSocketAddress(), packets.size(), chunkPositionX, chunkPositionZ, dimension, requestSubChunks);
     }
 
     public static LevelChunkPacket injectEmptyChunk(int chunkX, int chunkZ, int dimension, ProtocolVersion version, boolean requestSubChunks) {
