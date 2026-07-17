@@ -65,6 +65,12 @@ public class TransferCallback {
     private volatile boolean hasPlayStatus = false;
     private volatile TaskHandler<?> timeoutTask;
 
+    // Diagnostics surfaced in the timeout/failure warnings so a stuck transfer self-reports what the
+    // client actually did, without needing debug logging enabled.
+    private int dimChangeAckCount;      // client DIMENSION_CHANGE_SUCCESS (or simulated) seen
+    private int subChunkRequestCount;   // sub-chunk requests the client sent during the transfer
+    private boolean phase2DimChangeInjected;
+
     public TransferCallback(ProxiedPlayer player, ClientConnection connection, ServerInfo sourceServer, int targetDimension) {
         this.player = player;
         this.connection = connection;
@@ -79,6 +85,17 @@ public class TransferCallback {
      */
     private String logId() {
         return this.player.getAddress() + "|" + this.player.getName();
+    }
+
+    /**
+     * Snapshot of what the client did during the transfer, appended to timeout/failure warnings so a
+     * stuck transfer is diagnosable from the always-on logs (no debug required).
+     */
+    private String transferState() {
+        return "spawned=" + this.hasPlayStatus
+                + " dimChangeAcks=" + this.dimChangeAckCount
+                + " subChunkRequests=" + this.subChunkRequestCount
+                + " phase2DimInjected=" + this.phase2DimChangeInjected;
     }
 
     /**
@@ -108,7 +125,7 @@ public class TransferCallback {
         this.player.getRewriteData().clearTransferCallback(this);
 
         this.player.getLogger().warning("[" + this.logId() + "] Transfer to " + this.targetServer.getServerName()
-                + " timed out in phase " + phase + " (spawned=" + this.hasPlayStatus + ")");
+                + " timed out in phase " + phase + " (" + this.transferState() + ")");
         this.player.getProxy().getEventManager().callEvent(new ServerTransferFailedEvent(
                 this.player, this.targetServer, ReconnectReason.TIMEOUT, "Transfer timed out", false));
         this.player.disconnect(new TranslationContainer("waterdog.downstream.transfer.failed", this.targetServer.getServerName(), "Transfer timed out"));
@@ -128,6 +145,7 @@ public class TransferCallback {
     }
 
     public synchronized void onSubChunkRequest(int dimension, Vector3i center, List<Vector3i> offsets) {
+        this.subChunkRequestCount++;
         // Purely diagnostic now that the ACK is sent immediately: shows whether the client requests
         // sub-chunks during the transfer and for which dimension.
         this.player.getLogger().debug("[{}] sub-chunk request: dim={} center=({},{}) offsets={} phase={}",
@@ -135,8 +153,9 @@ public class TransferCallback {
     }
 
     public synchronized boolean onDimChangeSuccess() {
-        this.player.getLogger().debug("[{}] onDimChangeSuccess in phase {} (target={})",
-                this.logId(), this.transferPhase, this.targetServer.getServerName());
+        this.dimChangeAckCount++;
+        this.player.getLogger().debug("[{}] onDimChangeSuccess #{} in phase {} (target={})",
+                this.logId(), this.dimChangeAckCount, this.transferPhase, this.targetServer.getServerName());
         switch (this.transferPhase) {
             case PHASE_1:
                 // First dimension change was completed successfully.
@@ -170,6 +189,7 @@ public class TransferCallback {
             LongList requestModeColumns = injectDimensionChange(this.player.getConnection(), rewriteData.getDimension(),
                     rewriteData.getSpawnPosition(), this.player.getProtocol(), true, this.player.isSubChunkRequestMode());
             this.armDimChangeAck(requestModeColumns, rewriteData.getDimension());
+            this.phase2DimChangeInjected = true;
         }
 
         // Hand the client over to the new server and flush the queue so its real chunks reach the client. This
@@ -274,7 +294,8 @@ public class TransferCallback {
         }
 
         this.connection.disconnect();
-        this.player.getLogger().warning("[" + this.logId() + "] Failed to transfer to " + this.targetServer.getServerName() + ": " + reason);
+        this.player.getLogger().warning("[" + this.logId() + "] Failed to transfer to " + this.targetServer.getServerName()
+                + ": " + reason + " (" + this.transferState() + ")");
     }
 
     public TransferPhase getPhase() {
