@@ -279,10 +279,14 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
             Vector3f fakePosition = packet.getPlayerPosition().add(2000, 0, 2000);
             injectPosition(this.player.getConnection(), fakePosition, packet.getRotation(), rewriteData.getEntityId());
             this.player.getConnection().setTransferQueueActive(true, this.player.getName());
+            // Backpressure the target server: stop reading its stream so its world flood doesn't pile up in
+            // the transfer queue (and overflow-kick the player) while we wait for the client to finish the
+            // dim change. Reads resume when phase 1 completes and the queue is flushed.
+            this.connection.setAutoRead(false);
             LongList requestModeColumns = injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
                     player.getProtocol(), true, this.player.isSubChunkRequestMode());
             transferCallback.armDimChangeAck(requestModeColumns, newDimension);
-            log.debug("[{}|{}] Transfer to {}: fast path with transfer screen, queue active, awaiting client DIMENSION_CHANGE_SUCCESS (dim {} -> {})",
+            log.debug("[{}|{}] Transfer to {}: fast path with transfer screen, queue active + downstream reads paused, awaiting client DIMENSION_CHANGE_SUCCESS (dim {} -> {})",
                     this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId(), newDimension);
         } else if (newDimension == packet.getDimensionId()) {
             // Transfer between different dimensions

@@ -45,6 +45,15 @@ public interface ClientConnection extends ProxiedConnection {
 
     void addDisconnectListener(Runnable listener);
 
+    /**
+     * Toggles auto-read on the downstream channel. Disabling it applies transport-level backpressure so
+     * the server stops sending instead of the proxy buffering (and eventually dropping) its packets. Used
+     * to pause the target server's flood while a transfer waits for the client to finish the dim change.
+     */
+    default void setAutoRead(boolean autoRead) {
+        // No-op by default
+    }
+
     void disconnect();
 
     @Override

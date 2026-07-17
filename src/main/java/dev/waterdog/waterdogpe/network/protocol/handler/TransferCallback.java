@@ -178,8 +178,11 @@ public class TransferCallback {
             handler.setTargetConnection(this.connection);
         }
         this.player.getConnection().setTransferQueueActive(false, this.player.getName());
+        // Client finished the transfer screen: resume reading the target server so its buffered world
+        // now flows to the client.
+        this.connection.setAutoRead(true);
         this.transferPhase = PHASE_2;
-        this.player.getLogger().debug("[{}] Transfer phase 1 complete, transfer queue flushed, awaiting phase 2 dimension change",
+        this.player.getLogger().debug("[{}] Transfer phase 1 complete, transfer queue flushed + downstream reads resumed, awaiting phase 2 dimension change",
                 this.logId());
     }
 
@@ -258,6 +261,8 @@ public class TransferCallback {
         this.cancelTimeout();
         this.player.getRewriteData().clearTransferCallback(this);
         this.player.getConnection().discardTransferQueue();
+        // Undo any read pause in case the target connection outlives this failure path.
+        this.connection.setAutoRead(true);
 
         this.player.getProxy().getEventManager().callEvent(new ServerTransferFailedEvent(
                 this.player, this.targetServer, ReconnectReason.TRANSFER_FAILED, reason, false));

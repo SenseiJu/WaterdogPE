@@ -181,6 +181,11 @@ public class BedrockClientConnection extends SimpleChannelInboundHandler<Bedrock
     }
 
     @Override
+    public void setAutoRead(boolean autoRead) {
+        this.channel.config().setAutoRead(autoRead);
+    }
+
+    @Override
     public long getPing() {
         if (this.channel instanceof RakChannel rakChannel) {
             return rakChannel.rakPipeline().get(RakSessionCodec.class).getPing();
