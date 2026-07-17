@@ -28,9 +28,15 @@ import dev.waterdog.waterdogpe.network.protocol.rewrite.types.RewriteData;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import dev.waterdog.waterdogpe.scheduler.TaskHandler;
 import dev.waterdog.waterdogpe.utils.types.TranslationContainer;
+import it.unimi.dsi.fastutil.longs.LongList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import org.cloudburstmc.math.vector.Vector3f;
+import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StopSoundPacket;
+
+import java.util.List;
 
 import static dev.waterdog.waterdogpe.network.protocol.user.PlayerRewriteUtils.*;
 import static dev.waterdog.waterdogpe.network.protocol.handler.TransferCallback.TransferPhase.*;
@@ -60,6 +66,9 @@ public class TransferCallback {
     private volatile boolean finalized = false;
     private volatile boolean hasPlayStatus = false;
     private volatile TaskHandler<?> timeoutTask;
+
+    private LongSet pendingAckColumns;
+    private int pendingAckDimension;
 
     public TransferCallback(ProxiedPlayer player, ClientConnection connection, ServerInfo sourceServer, int targetDimension) {
         this.player = player;
@@ -101,6 +110,7 @@ public class TransferCallback {
         TransferPhase phase = this.transferPhase;
         this.transferPhase = RESET;
         this.finalized = true;
+        this.pendingAckColumns = null;
         this.player.getRewriteData().clearTransferCallback(this);
 
         this.player.getLogger().warning("[" + this.logId() + "] Transfer to " + this.targetServer.getServerName()
@@ -110,9 +120,55 @@ public class TransferCallback {
         this.player.disconnect(new TranslationContainer("waterdog.downstream.transfer.failed", this.targetServer.getServerName(), "Transfer timed out"));
     }
 
+    /**
+     * In sub-chunk request mode the fake chunks are empty shells the client still has to request.
+     * Sending the server-side dim change ACK before those requests can race the client's chunk
+     * loading, so it is held back until every column was requested. An empty column list means
+     * nothing to wait for and the ACK is sent right away.
+     */
+    public synchronized void armDimChangeAck(LongList requestModeColumns, int dimension) {
+        if (requestModeColumns.isEmpty() || this.player.getProtocol().isBefore(ProtocolVersion.MINECRAFT_PE_1_19_50)) {
+            injectDimensionChangeAck(this.player.getConnection(), this.player.getRewriteData().getEntityId(), this.player.getProtocol());
+            return;
+        }
+        this.pendingAckColumns = new LongOpenHashSet(requestModeColumns);
+        this.pendingAckDimension = dimension;
+        this.player.getLogger().debug("[{}] Deferred dim change ACK armed: columns={} dim={}",
+                this.logId(), requestModeColumns.size(), dimension);
+    }
+
+    public synchronized void onSubChunkRequest(int dimension, Vector3i center, List<Vector3i> offsets) {
+        if (this.pendingAckColumns == null || dimension != this.pendingAckDimension) {
+            return;
+        }
+        if (offsets.isEmpty()) {
+            this.pendingAckColumns.remove(chunkKey(center.getX(), center.getZ()));
+        } else {
+            for (Vector3i offset : offsets) {
+                this.pendingAckColumns.remove(chunkKey(center.getX() + offset.getX(), center.getZ() + offset.getZ()));
+            }
+        }
+        if (this.pendingAckColumns.isEmpty()) {
+            this.player.getLogger().debug("[{}] All fake columns requested, sending deferred dim change ACK (dim={})",
+                    this.logId(), dimension);
+            this.sendDeferredAck();
+        }
+    }
+
+    private void sendDeferredAck() {
+        this.pendingAckColumns = null;
+        injectDimensionChangeAck(this.player.getConnection(), this.player.getRewriteData().getEntityId(), this.player.getProtocol());
+    }
+
     public synchronized boolean onDimChangeSuccess() {
         this.player.getLogger().debug("[{}] onDimChangeSuccess in phase {} (target={})",
                 this.logId(), this.transferPhase, this.targetServer.getServerName());
+        if (this.pendingAckColumns != null) {
+            // Client finished the dim change without requesting every column, the ACK must not be withheld now.
+            this.player.getLogger().debug("[{}] Client dim change done with {} columns never requested, sending deferred ACK",
+                    this.logId(), this.pendingAckColumns.size());
+            this.sendDeferredAck();
+        }
         switch (this.transferPhase) {
             case PHASE_1:
                 // First dimension change was completed successfully.
@@ -143,7 +199,9 @@ public class TransferCallback {
         if (rewriteData.getDimension() != this.targetDimension) {
             injectPosition(this.player.getConnection(), fakePosition, rewriteData.getRotation(), rewriteData.getEntityId());
             rewriteData.setDimension(determineDimensionId(rewriteData.getDimension(), this.targetDimension));
-            injectDimensionChange(this.player.getConnection(), rewriteData.getDimension(), rewriteData.getSpawnPosition(), rewriteData.getEntityId(), this.player.getProtocol(), true, this.player.isSubChunkRequestMode());
+            LongList requestModeColumns = injectDimensionChange(this.player.getConnection(), rewriteData.getDimension(),
+                    rewriteData.getSpawnPosition(), this.player.getProtocol(), true, this.player.isSubChunkRequestMode());
+            this.armDimChangeAck(requestModeColumns, rewriteData.getDimension());
         }
 
         // Hand the client over to the new server and flush the queue so its real chunks reach the client. This
@@ -229,6 +287,7 @@ public class TransferCallback {
         // callback is active, and queued packets from the abandoned target must never reach the client.
         this.transferPhase = RESET;
         this.finalized = true; // a late PLAYER_SPAWN must not finalize a failed transfer
+        this.pendingAckColumns = null;
         this.cancelTimeout();
         this.player.getRewriteData().clearTransferCallback(this);
         this.player.getConnection().discardTransferQueue();

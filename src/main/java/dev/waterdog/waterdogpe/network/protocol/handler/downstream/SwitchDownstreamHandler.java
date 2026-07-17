@@ -37,6 +37,7 @@ import dev.waterdog.waterdogpe.utils.types.TranslationContainer;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
+import it.unimi.dsi.fastutil.longs.LongList;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectSet;
 import org.cloudburstmc.protocol.bedrock.data.HudElement;
@@ -278,15 +279,17 @@ public class SwitchDownstreamHandler extends AbstractDownstreamHandler {
             Vector3f fakePosition = packet.getPlayerPosition().add(2000, 0, 2000);
             injectPosition(this.player.getConnection(), fakePosition, packet.getRotation(), rewriteData.getEntityId());
             this.player.getConnection().setTransferQueueActive(true, this.player.getName());
-            injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
-                    rewriteData.getEntityId(), player.getProtocol(), true, this.player.isSubChunkRequestMode());
+            LongList requestModeColumns = injectDimensionChange(this.player.getConnection(), newDimension, fakePosition,
+                    player.getProtocol(), true, this.player.isSubChunkRequestMode());
+            transferCallback.armDimChangeAck(requestModeColumns, newDimension);
             log.debug("[{}|{}] Transfer to {}: fast path with transfer screen, queue active, awaiting client DIMENSION_CHANGE_SUCCESS (dim {} -> {})",
                     this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId(), newDimension);
         } else if (newDimension == packet.getDimensionId()) {
             // Transfer between different dimensions
             injectPosition(this.player.getConnection(), packet.getPlayerPosition(), packet.getRotation(), rewriteData.getEntityId());
-            injectDimensionChange(this.player.getConnection(), newDimension, packet.getPlayerPosition(),
-                    rewriteData.getEntityId(), player.getProtocol(), false, this.player.isSubChunkRequestMode());
+            LongList requestModeColumns = injectDimensionChange(this.player.getConnection(), newDimension, packet.getPlayerPosition(),
+                    player.getProtocol(), false, this.player.isSubChunkRequestMode());
+            transferCallback.armDimChangeAck(requestModeColumns, newDimension);
             log.debug("[{}|{}] Transfer to {}: same-dimension path, simulating dim-change immediately (dim {})",
                     this.player.getAddress(), this.player.getName(), this.connection.getServerInfo().getServerName(), packet.getDimensionId());
             transferCallback.onDimChangeSuccess(); // Simulate two dim-change behaviour

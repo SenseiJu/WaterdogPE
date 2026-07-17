@@ -34,6 +34,9 @@ import dev.waterdog.waterdogpe.network.protocol.ProtocolVersion;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongList;
+import it.unimi.dsi.fastutil.longs.LongLists;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import org.cloudburstmc.protocol.common.util.VarInts;
 
@@ -336,9 +339,14 @@ public class PlayerRewriteUtils {
         session.sendPacketImmediately(packet);
     }
 
-    public static void injectDimensionChange(ProxiedConnection session, int dimensionId, Vector3f position, long runtimeId, ProtocolVersion version, boolean chunks, boolean requestSubChunks) {
+    /**
+     * Returns the chunk columns that were sent in sub-chunk request mode, empty otherwise.
+     * The server-side dim change ACK is no longer sent here: the caller must arm it via
+     * TransferCallback#armDimChangeAck so it can be held back until the client requested the columns.
+     */
+    public static LongList injectDimensionChange(ProxiedConnection session, int dimensionId, Vector3f position, ProtocolVersion version, boolean chunks, boolean requestSubChunks) {
         if (session == null || !session.isConnected()) {
-            return;
+            return LongLists.EMPTY_LIST;
         }
         log.debug("[{}] injectDimensionChange: dim={} pos={} chunks={} requestSubChunks={} protocol={}",
                 session.getSocketAddress(), dimensionId, position, chunks, requestSubChunks, version.getProtocol());
@@ -352,32 +360,41 @@ public class PlayerRewriteUtils {
 
         if (chunks) {
             injectChunkPublisherUpdate(session, position.toInt(), 3);
-            injectEmptyChunks(session, position, 3, dimensionId, version, requestSubChunks);
+            LongList columns = injectEmptyChunks(session, position, 3, dimensionId, version, requestSubChunks);
+            if (requestSubChunks && version.isAfterOrEqual(ProtocolVersion.MINECRAFT_PE_1_18_30)) {
+                return columns;
+            }
         }
-
-        if (version.isAfterOrEqual(ProtocolVersion.MINECRAFT_PE_1_19_50)) {
-            // The game does for some unknown reason expect client dim change ACK
-            // to be sent from server in order to fully finish the transfer
-            PlayerActionPacket actionPacket = new PlayerActionPacket();
-            actionPacket.setRuntimeEntityId(runtimeId);
-            actionPacket.setAction(PlayerActionType.DIMENSION_CHANGE_SUCCESS);
-            actionPacket.setBlockPosition(Vector3i.ZERO);
-            actionPacket.setResultPosition(Vector3i.ZERO);
-            actionPacket.setFace(0);
-            session.sendPacketImmediately(actionPacket);
-            log.debug("[{}] injectDimensionChange: sent server-side DIMENSION_CHANGE_SUCCESS ack (protocol {} >= 1.19.50)",
-                    session.getSocketAddress(), version.getProtocol());
-        }
+        return LongLists.EMPTY_LIST;
     }
 
-    public static void injectEmptyChunks(ProxiedConnection session, Vector3f spawnPosition, int radius, int dimension, ProtocolVersion version, boolean requestSubChunks) {
+    public static void injectDimensionChangeAck(ProxiedConnection session, long runtimeId, ProtocolVersion version) {
+        if (session == null || !session.isConnected() || version.isBefore(ProtocolVersion.MINECRAFT_PE_1_19_50)) {
+            return;
+        }
+        // The game does for some unknown reason expect client dim change ACK
+        // to be sent from server in order to fully finish the transfer
+        PlayerActionPacket actionPacket = new PlayerActionPacket();
+        actionPacket.setRuntimeEntityId(runtimeId);
+        actionPacket.setAction(PlayerActionType.DIMENSION_CHANGE_SUCCESS);
+        actionPacket.setBlockPosition(Vector3i.ZERO);
+        actionPacket.setResultPosition(Vector3i.ZERO);
+        actionPacket.setFace(0);
+        session.sendPacketImmediately(actionPacket);
+        log.debug("[{}] injectDimensionChangeAck: sent server-side DIMENSION_CHANGE_SUCCESS ack (protocol {} >= 1.19.50)",
+                session.getSocketAddress(), version.getProtocol());
+    }
+
+    public static LongList injectEmptyChunks(ProxiedConnection session, Vector3f spawnPosition, int radius, int dimension, ProtocolVersion version, boolean requestSubChunks) {
         int chunkPositionX = spawnPosition.getFloorX() >> 4;
         int chunkPositionZ = spawnPosition.getFloorZ() >> 4;
 
+        LongList columns = new LongArrayList();
         List<BedrockPacket> packets = new ObjectArrayList<>();
         for (int x = -radius; x <= radius; x++) {
             for (int z = -radius; z <= radius; z++) {
                 packets.add(injectEmptyChunk(chunkPositionX + x, chunkPositionZ + z, dimension, version, requestSubChunks));
+                columns.add(chunkKey(chunkPositionX + x, chunkPositionZ + z));
             }
         }
 
@@ -386,6 +403,11 @@ public class PlayerRewriteUtils {
         session.sendPacket(wrapper);
         log.debug("[{}] injectEmptyChunks: sent {} LevelChunkPackets center=({},{}) dim={} requestSubChunks={}",
                 session.getSocketAddress(), packets.size(), chunkPositionX, chunkPositionZ, dimension, requestSubChunks);
+        return columns;
+    }
+
+    public static long chunkKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
     }
 
     public static LevelChunkPacket injectEmptyChunk(int chunkX, int chunkZ, int dimension, ProtocolVersion version, boolean requestSubChunks) {

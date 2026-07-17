@@ -75,12 +75,18 @@ public class ConnectedUpstreamHandler extends AbstractUpstreamHandler implements
 
     @Override
     public PacketSignal handle(SubChunkRequestPacket packet) {
+        TransferCallback callback = this.player.getRewriteData().getTransferCallback();
+        if (callback == null) {
+            return PacketSignal.UNHANDLED;
+        }
+        // Feed the request into the transfer callback so the deferred server-side dim change ACK is
+        // released once the client has requested every fake column.
+        callback.onSubChunkRequest(packet.getDimension(), packet.getSubChunkPosition(), packet.getPositionOffsets());
         // Only the fake intermediate chunks (phase 1) are answered by us. On the target hop (phase 2) the new
         // server is wired to the client and provides the real chunks, so its sub-chunk requests must pass through.
-        TransferCallback callback = this.player.getRewriteData().getTransferCallback();
-        if (callback == null || callback.getPhase() != TransferCallback.TransferPhase.PHASE_1) {
+        if (callback.getPhase() != TransferCallback.TransferPhase.PHASE_1) {
             this.player.getLogger().debug("[{}|{}] SubChunkRequest passed through to server (phase={})",
-                    this.player.getAddress(), this.player.getName(), callback == null ? "none" : callback.getPhase());
+                    this.player.getAddress(), this.player.getName(), callback.getPhase());
             return PacketSignal.UNHANDLED;
         }
         this.player.getLogger().debug("[{}|{}] SubChunkRequest during PHASE_1, answering with air sub-chunks (offsets={})",
