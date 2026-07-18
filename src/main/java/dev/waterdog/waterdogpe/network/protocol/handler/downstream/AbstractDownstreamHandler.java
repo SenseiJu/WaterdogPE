@@ -31,6 +31,7 @@ import org.cloudburstmc.protocol.bedrock.data.command.CommandData;
 import org.cloudburstmc.protocol.bedrock.data.command.CommandEnumConstraint;
 import org.cloudburstmc.protocol.bedrock.data.command.CommandEnumData;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
+import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleNamedDefinition;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.*;
@@ -203,12 +204,26 @@ public abstract class AbstractDownstreamHandler implements ProxyPacketHandler {
         IntSet runtimeIds = new IntOpenHashSet();
         for (ItemDefinition definition : definitions) {
             if (runtimeIds.add(definition.getRuntimeId())) {
-                itemRegistry.add(definition);
+                itemRegistry.add(stripComponentData(definition));
             } else {
                 player.getLogger().warning("[{}|{}] has duplicate item definition: {}", this.player.getName(), this.connection.getServerInfo().getServerName(), definition);
             }
         }
         codecHelper.setItemDefinitions(itemRegistry.build());
+    }
+
+    /**
+     * Returns a copy of the definition without its component NBT. The codec helper only needs the
+     * identifier/runtimeId mapping to (de)serialize item stacks; the component data was already forwarded
+     * to the client in the original packet, so retaining a decoded per-session copy of it only bloats the
+     * heap (tens of thousands of NbtMaps per player on modern protocols).
+     */
+    private static ItemDefinition stripComponentData(ItemDefinition definition) {
+        if (definition.getComponentData() == null) {
+            return definition;
+        }
+        return new SimpleItemDefinition(definition.getIdentifier(), definition.getRuntimeId(),
+                definition.getVersion(), definition.isComponentBased(), null);
     }
 
     protected void setCameraPresetDefinitions(Collection<CameraPreset> presets) {
