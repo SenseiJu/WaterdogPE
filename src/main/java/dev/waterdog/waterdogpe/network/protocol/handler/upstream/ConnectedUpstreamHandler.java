@@ -92,8 +92,6 @@ public class ConnectedUpstreamHandler extends AbstractUpstreamHandler implements
             return Signals.CANCEL;
         }
 
-        // Only force a re-encode when a listener actually rewrote the message; otherwise pass the
-        // original packet bytes through untouched so a chat flood costs nothing to re-serialize.
         if (event.isChanged()) {
             packet.setMessage(event.getMessage());
             return PacketSignal.HANDLED;

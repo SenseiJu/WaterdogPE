@@ -28,10 +28,6 @@ public class PlayerChatEvent extends PlayerEvent implements CancellableEvent {
 
     private String message;
 
-    /**
-     * Whether a listener rewrote the message via {@link #setMessage(String)}. When {@code false}
-     * the proxy can forward the original packet bytes untouched instead of re-encoding them.
-     */
     private boolean changed;
 
     public PlayerChatEvent(ProxiedPlayer player, String message) {
