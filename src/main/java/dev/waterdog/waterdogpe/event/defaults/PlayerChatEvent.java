@@ -19,6 +19,8 @@ import dev.waterdog.waterdogpe.event.CancellableEvent;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import lombok.Getter;
 
+import java.util.Objects;
+
 /**
  * Called before a player sends a message to the chat.
  * At this point it is possible to cancel or modify the message.
@@ -36,8 +38,10 @@ public class PlayerChatEvent extends PlayerEvent implements CancellableEvent {
     }
 
     public void setMessage(String message) {
+        if (!Objects.equals(this.message, message)) {
+            this.changed = true;
+        }
         this.message = message;
-        this.changed = true;
     }
 
 }
