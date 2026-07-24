@@ -18,21 +18,30 @@ package dev.waterdog.waterdogpe.event.defaults;
 import dev.waterdog.waterdogpe.event.CancellableEvent;
 import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 import lombok.Getter;
-import lombok.Setter;
 
 /**
  * Called before a player sends a message to the chat.
  * At this point it is possible to cancel or modify the message.
  */
-@Setter
 @Getter
 public class PlayerChatEvent extends PlayerEvent implements CancellableEvent {
 
     private String message;
 
+    /**
+     * Whether a listener rewrote the message via {@link #setMessage(String)}. When {@code false}
+     * the proxy can forward the original packet bytes untouched instead of re-encoding them.
+     */
+    private boolean changed;
+
     public PlayerChatEvent(ProxiedPlayer player, String message) {
         super(player);
         this.message = message;
+    }
+
+    public void setMessage(String message) {
+        this.message = message;
+        this.changed = true;
     }
 
 }
